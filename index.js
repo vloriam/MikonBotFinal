@@ -84,26 +84,25 @@ async function startBot() {
         const { connection, qr, lastDisconnect } = update;
         if (qr) {
             // Generar el código QR en formato base64 y almacenarlo
-            qrcode.toDataURL(qr, (err, url) => {
-                if (err) {
-                    console.error('Error generando el QR:', err);
-                    return;
-                }
-                qrCodeData = url; // Almacena el QR en base64
-                console.log('QR disponible en el navegador en http://0.0.0.0:3000/qr');
-            });
+            try {
+            qrCodeData = await qrcode.toDataURL(qr);
+            console.log('QR generado y almacenado');
+            console.log('QR disponible en el navegador en http://0.0.0.0:3000/qr');
+        } catch (err) {
+            console.error('Error generando el QR:', err);
         }
+    }
 
-        if (connection === 'open') {
-            console.log('Conexión establecida con WhatsApp');
-        } else if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error === undefined || new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut);
-            console.log('Conexión cerrada, ¿debería reconectar?', shouldReconnect);
-            if (shouldReconnect) {
-                startBot(); // Reintentar la conexión
-            }
+    if (connection === 'open') {
+        console.log('Conexión establecida con WhatsApp');
+    } else if (connection === 'close') {
+        const shouldReconnect = (lastDisconnect.error === undefined || new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut);
+        console.log('Conexión cerrada, ¿debería reconectar?', shouldReconnect);
+        if (shouldReconnect) {
+            startBot(); // Reintentar la conexión
         }
-    });
+    }
+});
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -263,7 +262,11 @@ async function startBot() {
 
 // Ruta para mostrar el código QR en el navegador
 app.get('/qr', (req, res) => {
-    res.send(`<img src="${qrCodeData}" alt="QR Code">`);
+     if (qrCodeData) {
+        res.send(`<img src="${qrCodeData}" alt="QR Code">`);
+    } else {
+        res.status(404).send('QR Code no disponible aún. Por favor, espera a que se genere.');
+    }
 });
 
 
