@@ -72,7 +72,7 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: false, // No imprime el QR en la terminal ya que lo mostramos en la web
+        printQRInTerminal: true, // No imprime el QR en la terminal ya que lo mostramos en la web
         logger: pino({ level: 'debug' }), // Habilitar logs detallados
         browser: ['Bot de WhatsApp', 'Safari', '1.0'],
     });
@@ -90,7 +90,7 @@ async function startBot() {
                     return;
                 }
                 qrCodeData = url; // Almacena el QR en base64
-                console.log('QR disponible en el navegador en http://localhost:3000/qr');
+                console.log('QR disponible en el navegador en http://0.0.0.0:3000/qr');
             });
         }
 
