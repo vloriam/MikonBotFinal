@@ -58,8 +58,6 @@ let currentUser = null;
 let currentCategory = null;
 let currentFormLink = null;
 
-// Variable para almacenar el QR en base64
-let qrCodeData = '';
 
 // Store para mantener el estado de la conexión en memoria
 const store = makeInMemoryStore({ logger: pino().child({ level: 'debug', stream: 'store' }) });
@@ -72,7 +70,6 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: true, // No imprime el QR en la terminal ya que lo mostramos en la web
         logger: pino({ level: 'debug' }), // Habilitar logs detallados
         browser: ['Bot de WhatsApp', 'Safari', '1.0'],
     });
@@ -86,9 +83,9 @@ async function startBot() {
         if (qr) {
             // Generar el código QR en formato base64 y almacenarlo
             try {
-            qrCodeData = await qrcode.toDataURL(qr);
-            console.log('QR generado y almacenado');
-            console.log('QR disponible en el navegador en http://localhost:3000/qr');
+            qrCodeData = await qrcode.toDataURL(qr, { type: 'terminal'});
+            console.log('QR generado:');
+            console.log('QRCode');
         } catch (err) {
             console.error('Error generando el QR:', err);
         }
@@ -261,23 +258,10 @@ async function startBot() {
     });
 }
 
-// Ruta para mostrar el código QR en el navegador
-app.get('/qr', (req, res) => {
-     if (qrCodeData) {
-        res.send(`<img src="${qrCodeData}" alt="QR Code">`);
-    } else {  
-         res.send('Generando QR, por favor espera...');
-    }
-});
-
-
 // Iniciar servidor
+
+    startBot(); // Iniciar el bot de WhatsApp
 app.listen(port, () => {
     console.log(`Servidor escuchando en http://localhost:${port}`);
-    startBot(); // Iniciar el bot de WhatsApp
 });
-// Middleware para manejo de errores en Express
-app.use((err, req, res, next) => {
-    console.error('Error en la aplicación:', err);
-    res.status(500).send('Ocurrió un error en la aplicación. Por favor, inténtalo de nuevo más tarde.');
-});
+
