@@ -72,7 +72,7 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: true, // No imprime el QR en la terminal ya que lo mostramos en la web
+        printQRInTerminal: false, // No imprime el QR en la terminal ya que lo mostramos en la web
         logger: pino({ level: 'debug' }), // Habilitar logs detallados
         browser: ['Bot de WhatsApp', 'Safari', '1.0'],
     });
@@ -87,7 +87,7 @@ async function startBot() {
             try {
             qrCodeData = await qrcode.toDataURL(qr);
             console.log('QR generado y almacenado');
-            console.log('QR disponible en el navegador en http://0.0.0.0:3000/qr');
+            console.log('QR disponible en el navegador en http://localhost:3000/qr');
         } catch (err) {
             console.error('Error generando el QR:', err);
         }
@@ -264,15 +264,15 @@ async function startBot() {
 app.get('/qr', (req, res) => {
      if (qrCodeData) {
         res.send(`<img src="${qrCodeData}" alt="QR Code">`);
-    } else {
-        res.status(404).send('QR Code no disponible aún. Por favor, espera a que se genere.');
+    } else {  
+         res.send('Generando QR, por favor espera...');
     }
 });
 
 
 // Iniciar servidor
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Servidor escuchando en http://0.0.0.0:${port}`);
+app.listen(port, () => {
+    console.log(`Servidor escuchando en http://localhost:${port}`);
     startBot(); // Iniciar el bot de WhatsApp
 });
 // Middleware para manejo de errores en Express
