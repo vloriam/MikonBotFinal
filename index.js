@@ -263,15 +263,17 @@ async function startBot() {
 
 // Ruta para mostrar el código QR en el navegador
 app.get('/qr', (req, res) => {
-    if (qrCodeData) {
-        res.send(`<img src="${qrCodeData}" alt="Escanea este código QR para conectar WhatsApp" />`);
-    } else {
-        res.send('El código QR aún no está disponible. Por favor, recarga esta página en unos momentos.');
-    }
+    res.send(`<img src="${qrCodeData}" alt="QR Code">`);
 });
+
 
 // Iniciar servidor
 app.listen(port, '0.0.0.0', () => {
     console.log(`Servidor escuchando en http://0.0.0.0:${port}`);
     startBot(); // Iniciar el bot de WhatsApp
+});
+// Middleware para manejo de errores en Express
+app.use((err, req, res, next) => {
+    console.error('Error en la aplicación:', err);
+    res.status(500).send('Ocurrió un error en la aplicación. Por favor, inténtalo de nuevo más tarde.');
 });
