@@ -70,7 +70,7 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        logger: pino({ level: 'debug' }), // Habilitar logs detallados
+        logger: pino({ level: 'debug', transport: {target: 'pino-pretty'} }), // Habilitar logs detallados
         browser: ['Bot de WhatsApp', 'Safari', '1.0'],
     });
 
