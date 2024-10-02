@@ -78,6 +78,7 @@ async function startBot() {
     });
 
     // Vincula el store a los eventos del socket
+    sock.ev.on('creds.update', saveCreds);
     store.bind(sock.ev);
 
     sock.ev.on('connection.update', async (update) => {
