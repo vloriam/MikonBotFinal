@@ -1,10 +1,10 @@
-const { default: makeWASocket, useSingleFileAuthState, downloadContentFromMessage } = require('@adiwajshing/baileys');
-const qrcode = require('qrcode');
+const makeWASocket = require('@adiwajshing/baileys').default;
+const { useMultiFileAuthState, DisconnectReason } = require('@adiwajshing/baileys');
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const bodyParser = require('body-parser');
 const mysql = require('mysql2');
+const fs = require('fs');
+const bodyParser = require('body-parser');
+const qrcode = require('qrcode'); // Asegúrate de requerir el módulo qrcode
 
 const app = express();
 const port = 3000;
@@ -55,60 +55,92 @@ let currentUser = null;
 let currentCategory = null;
 let currentFormLink = null;
 
-// Inicializa el socket de Baileys
+// Variable para almacenar el QR en base64
+let qrCodeData = '';
+
 async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
+
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true
+        printQRInTerminal: true, // Para mostrar el QR en la terminal
     });
 
-    sock.ev.on('creds.update', saveState);
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, qr, lastDisconnect } = update;
 
-    // Evento cuando se recibe un mensaje
-    sock.ev.on('messages.upsert', async (msg) => {
-        const message = msg.messages[0];
+        if (qr) {
+            // Generar el código QR en formato base64 y almacenarlo
+            qrcode.toDataURL(qr, (err, url) => {
+                if (err) {
+                    console.error('Error generando el QR:', err);
+                    return;
+                }
+                qrCodeData = url;  // Almacena el QR en base64 en la variable qrCodeData
+                console.log('QR disponible en el navegador en http://localhost:3000/qr');
+            });
+        }
+
+        if (connection === 'open') {
+            console.log('Conexión establecida con WhatsApp');
+        } else if (connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Conexión cerrada, ¿debería reconectar?', shouldReconnect);
+            if (shouldReconnect) {
+                startBot(); // Intenta reconectar
+            }
+        }
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        const message = messages[0];
+        if (!message.message) return;
+
+        const text = message.message.conversation || '';
         const chatId = message.key.remoteJid;
-        const text = message.message.conversation?.trim().toLowerCase() || '';
 
-    console.log(`Mensaje recibido: ${text} en ${chatId}`);
+        console.log(`Mensaje recibido: ${text} en ${chatId}`);
 
-    if (text === 'hola') {
-        currentUser = null;
-        currentCategory = null;
-        currentFormLink = null;
-        await sock.sendMessage(chatId, { text: '¡Hola! Gracias por elegir Mikonsulting. ¿Necesitas un contrato rápido y legal? ¡Nosotros te lo generamos en menos de un minuto! ⚡ Escribe tu usuario y contraseña en el formato: usuario contraseña (ejemplo: usuario1 pass1)' });
+        if (text.toLowerCase() === 'hola') {
+            currentUser = null;
+            currentCategory = null;
+            currentFormLink = null;
+            await sock.sendMessage(chatId, { text: '¡Hola! Escribe tu usuario y contraseña en el formato: usuario contraseña (ejemplo: usuario1 pass1)' });
             return;
-    }
+        }
 
-    if (!currentUser) {
-        const [user, password] = text.split(' ');
-        // Verifica las credenciales en la base de datos
-        db.query('SELECT * FROM users WHERE username = ? AND password = ?', [user, password], (err, results) => {
-            if (err) {
-                console.error('Error al consultar la base de datos:', err);
-                sock.sendMessage(chatId, { text: 'Ocurrió un error al verificar tus credenciales. Inténtalo de nuevo.' });
+        if (!currentUser) {
+            const [user, password] = text.split(' ');
+            // Verifica las credenciales en la base de datos
+            db.query('SELECT * FROM users WHERE username = ? AND password = ?', [user, password], async (err, results) => {
+                if (err) {
+                    console.error('Error al consultar la base de datos:', err);
+                    await sock.sendMessage(chatId, { text: 'Ocurrió un error al verificar tus credenciales. Inténtalo de nuevo.' });
                     return;
                 }
 
                 if (results.length === 0) {
-                    sock.sendMessage(chatId, { text: 'Usuario no válido o contraseña incorrecta. Por favor, inténtalo nuevamente.' });
+                    await sock.sendMessage(chatId, { text: 'Usuario no válido o contraseña incorrecta. Por favor, inténtalo nuevamente.' });
                     return;
-            }
+                }
 
-            currentUser = results[0]; // Asignar el usuario autenticado
-            const options = ['1', '2', '3', '4', '5'];
-            const availableOptions = options.filter(option => currentUser.access.includes(option));
-            const response = `Bienvenido ${user}. Tienes acceso a los siguientes contratos:\n` +
-                            `1. Contratos para Emprendedores\n` +
-                            `2. Contratos para Pymes\n` +
-                            `3. Contratos Empresariales\n` +
-                            `4. Contratos de Arrendamiento\n` +
-                            `5. Contratos Especializados\n\n` +
-                            `Selecciona el número de la opción que te interesa.`;
-            sock.sendMessage(chatId, { text: response });
-        });
-        return;
-    }
+                currentUser = results[0]; // Asignar el usuario autenticado
+                const options = ['1', '2', '3', '4', '5'];
+                const availableOptions = options.filter(option => currentUser.access.includes(option));
+                const response = `Bienvenido ${user}. Tienes acceso a los siguientes contratos:\n` +
+                                `1. Contratos para Emprendedores\n` +
+                                `2. Contratos para Pymes\n` +
+                                `3. Contratos Empresariales\n` +
+                                `4. Contratos de Arrendamiento\n` +
+                                `5. Contratos Especializados\n\n` +
+                                `Selecciona el número de la opción que te interesa.`;
+                await sock.sendMessage(chatId, { text: response });
+            });
+            return;
+        }
+
 
 
    // Manejo de opciones disponibles
@@ -166,75 +198,65 @@ async function startBot() {
                        'i. KPI';
                 break;
         }
-        await sock.sendMessage(chatId, { text: response });
-        return;
-    }
-
-  // Manejo de sub-opciones
-            if (currentCategory) {
-                const subOption = text;
-
-                if (links[currentCategory] && links[currentCategory][subOption]) {
-                    currentFormLink = links[currentCategory][subOption];
-                    await sock.sendMessage(chatId, { text: `Por favor, completa el formulario en este enlace: ${currentFormLink}` });
-                    return;
-                }
-                await sock.sendMessage(chatId, { text: 'Opción no válida. Por favor, selecciona una opción válida.' });
+       await sock.sendMessage(chatId, { text: response + '\n\nSelecciona la letra del formato que deseas recibir.' });
                 return;
             }
-        }
 
-        // Manejo del comando "listo"
-        if (text === 'listo') {
-            // Consulta el archivo PDF correspondiente en la base de datos
-            db.query('SELECT archivo_pdf FROM contratos WHERE numero_whatsapp = ?', [chatId], async (err, results) => {
-                if (err) {
-                    console.error('Error al consultar la base de datos:', err);
-                    await sock.sendMessage(chatId, { text: 'Ocurrió un error al intentar enviar el contrato. Inténtalo de nuevo.' });
+            if (currentCategory && /^[a-i]$/i.test(option)) {
+                const formLink = links[currentCategory][option.toLowerCase()];
+                if (!formLink) {
+                    await sock.sendMessage(chatId, { text: 'Opción no válida. Por favor, selecciona una letra correcta.' });
                     return;
                 }
 
-                if (results.length === 0) {
-                    await sock.sendMessage(chatId, { text: 'No se encontró un contrato asociado a este número.' });
-                    return;
-                }
+                currentFormLink = formLink;
+                await sock.sendMessage(chatId, { text: `Aquí está el enlace para el contrato seleccionado: ${formLink}` });
+                await sock.sendMessage(chatId, { text: 'Escribe *listo* cuando hayas completado el formulario.' });
+                return;
+            }
 
-                const archivoPdf = results[0].archivo_pdf;
+            if (text.toLowerCase() === 'listo' && currentFormLink) {
+                db.query('SELECT archivo_pdf FROM contratos WHERE numero_whatsapp = ?', [chatId], async (err, result) => {
+                    if (err) {
+                        console.error('Error al consultar la base de datos:', err);
+                        await sock.sendMessage(chatId, { text: 'Ocurrió un error al procesar tu solicitud.' });
+                        return;
+                    }
 
-                // Envío del archivo PDF
-                await sock.sendMessage(chatId, {
-                    document: fs.readFileSync(archivoPdf), // Asegúrate de que la ruta del archivo sea correcta
-                    mimetype: 'application/pdf',
-                    fileName: 'Contrato.pdf', // Nombre que tendrá el archivo al ser descargado
-                    caption: 'Aquí tienes tu contrato solicitado.'
+                    if (result.length === 0) {
+                        await sock.sendMessage(chatId, { text: 'No se encontró ningún archivo para tu número de WhatsApp.' });
+                        return;
+                    }
+
+                    const filePath = result[0].archivo_pdf;
+                    const fileBuffer = fs.readFileSync(filePath);
+
+                    await sock.sendMessage(chatId, {
+                        document: fileBuffer,
+                        mimetype: 'application/pdf',
+                        fileName: 'contrato.pdf',
+                    });
+
+                    await sock.sendMessage(chatId, { text: 'Aquí está tu contrato en formato PDF.' });
+                    currentFormLink = null; // Restablecer el estado
                 });
-                await sock.sendMessage(chatId, { text: 'Contrato enviado con éxito.' });
                 return;
-            });
-        }
-    });
-
-    // Evento de conexión
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            if ((lastDisconnect.error && lastDisconnect.error.output.statusCode !== 401) || lastDisconnect.error) {
-                console.log('Conexión cerrada, intentando reconectar...');
-                startBot();
-            } else {
-                console.log('Conexión cerrada por el cliente');
             }
-        } else if (connection === 'open') {
-            console.log('Conectado exitosamente al servicio de WhatsApp');
         }
     });
-
-    return sock;
 }
 
-startBot();
+// Ruta para mostrar el código QR en el navegador
+app.get('/qr', (req, res) => {
+    if (qrCodeData) {
+        res.send(`<img src="${qrCodeData}" alt="Escanea este código QR para conectar WhatsApp" />`);
+    } else {
+        res.send('El código QR aún no está disponible. Por favor, recarga esta página en unos momentos.');
+    }
+});
 
-// Inicia el servidor Express
+// Iniciar servidor
 app.listen(port, '0.0.0.0', () => {
     console.log(`Servidor escuchando en http://0.0.0.0:${port}`);
+    startBot(); // Iniciar el bot de WhatsApp
 });
