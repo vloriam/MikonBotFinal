@@ -1,10 +1,13 @@
 const makeWASocket = require('@adiwajshing/baileys').default;
-const { useMultiFileAuthState, DisconnectReason } = require('@adiwajshing/baileys');
+const { useMultiFileAuthState, DisconnectReason, makeInMemoryStore, fetchLatestBaileysVersion } = require('@adiwajshing/baileys');
+const { Boom } = require('@hapi/boom');
 const express = require('express');
 const mysql = require('mysql2');
 const fs = require('fs');
 const bodyParser = require('body-parser');
-const qrcode = require('qrcode'); // Asegúrate de requerir el módulo qrcode
+const qrcode = require('qrcode');
+const pino = require('pino'); // Asegúrate de requerir pino para logs detallados
+
 
 const app = express();
 const port = 3000;
@@ -58,17 +61,27 @@ let currentFormLink = null;
 // Variable para almacenar el QR en base64
 let qrCodeData = '';
 
+// Store para mantener el estado de la conexión en memoria
+const store = makeInMemoryStore({ logger: pino().child({ level: 'debug', stream: 'store' }) });
+
+// Función para iniciar el bot
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
+    const { version } = await fetchLatestBaileysVersion(); // Obtiene la versión más reciente
 
     const sock = makeWASocket({
+        version,
         auth: state,
-        printQRInTerminal: true, // Para mostrar el QR en la terminal
+        printQRInTerminal: false, // No imprime el QR en la terminal ya que lo mostramos en la web
+        logger: pino({ level: 'debug' }), // Habilitar logs detallados
+        browser: ['Bot de WhatsApp', 'Safari', '1.0'],
     });
+
+    // Vincula el store a los eventos del socket
+    store.bind(sock.ev);
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, qr, lastDisconnect } = update;
-
         if (qr) {
             // Generar el código QR en formato base64 y almacenarlo
             qrcode.toDataURL(qr, (err, url) => {
@@ -76,7 +89,7 @@ async function startBot() {
                     console.error('Error generando el QR:', err);
                     return;
                 }
-                qrCodeData = url;  // Almacena el QR en base64 en la variable qrCodeData
+                qrCodeData = url; // Almacena el QR en base64
                 console.log('QR disponible en el navegador en http://localhost:3000/qr');
             });
         }
@@ -84,16 +97,17 @@ async function startBot() {
         if (connection === 'open') {
             console.log('Conexión establecida con WhatsApp');
         } else if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = (lastDisconnect.error === undefined || new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut);
             console.log('Conexión cerrada, ¿debería reconectar?', shouldReconnect);
             if (shouldReconnect) {
-                startBot(); // Intenta reconectar
+                startBot(); // Reintentar la conexión
             }
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
 
+    // Procesamiento de mensajes entrantes
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         const message = messages[0];
         if (!message.message) return;
@@ -103,6 +117,7 @@ async function startBot() {
 
         console.log(`Mensaje recibido: ${text} en ${chatId}`);
 
+                // Manejo de comandos y autenticación del usuario
         if (text.toLowerCase() === 'hola') {
             currentUser = null;
             currentCategory = null;
@@ -110,7 +125,7 @@ async function startBot() {
             await sock.sendMessage(chatId, { text: '¡Hola! Escribe tu usuario y contraseña en el formato: usuario contraseña (ejemplo: usuario1 pass1)' });
             return;
         }
-
+        
         if (!currentUser) {
             const [user, password] = text.split(' ');
             // Verifica las credenciales en la base de datos
