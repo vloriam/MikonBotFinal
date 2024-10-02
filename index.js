@@ -83,9 +83,9 @@ async function startBot() {
         if (qr) {
             // Generar el código QR en formato base64 y almacenarlo
             try {
-            qrCodeData = await qrcode.toDataURL(qr, { type: 'terminal'});
+            const qrCodeData = await qrcode.toString(qr, { type: 'terminal'});
             console.log('QR generado:');
-            console.log('QRCode');
+            console.log('qrCodeData');//Imprimir el QR en la terminal
         } catch (err) {
             console.error('Error generando el QR:', err);
         }
