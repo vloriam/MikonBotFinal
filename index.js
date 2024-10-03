@@ -1,13 +1,10 @@
-const makeWASocket = require('@adiwajshing/baileys').default;
-const { useMultiFileAuthState, DisconnectReason, makeInMemoryStore, fetchLatestBaileysVersion } = require('@adiwajshing/baileys');
-const { Boom } = require('@hapi/boom');
-const express = require('express');
-const mysql = require('mysql2');
-const fs = require('fs');
-const bodyParser = require('body-parser');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
-const pino = require('pino'); // Asegúrate de requerir pino para logs detallados
-
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const bodyParser = require('body-parser');
+const mysql = require('mysql2');
 
 const app = express();
 const port = 3000;
@@ -58,101 +55,80 @@ let currentUser = null;
 let currentCategory = null;
 let currentFormLink = null;
 
+// Variable para almacenar el QR en base64
+let qrCodeData = '';
 
-// Store para mantener el estado de la conexión en memoria
-const store = makeInMemoryStore({ logger: pino().child({ level: 'debug', stream: 'store' }) });
-
-// Función para iniciar el bot
-async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
-    const { version } = await fetchLatestBaileysVersion(); // Obtiene la versión más reciente
-
-    const sock = makeWASocket({
-        version,
-        auth: state,
-        logger: pino({ level: 'debug', transport: {target: 'pino-pretty'} }), // Habilitar logs detallados
-        browser: ['Bot de WhatsApp', 'Safari', '1.0'],
-    });
-
-    // Vincula el store a los eventos del socket
-    sock.ev.on('creds.update', saveCreds);
-    store.bind(sock.ev);
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, qr, lastDisconnect } = update;
-        if (qr) {
-            // Generar el código QR en formato base64 y almacenarlo
-            try {
-            const qrCodeData = await qrcode.toString(qr, { type: 'terminal'});
-            console.log('QR generado:');
-            console.log('qrCodeData');//Imprimir el QR en la terminal
-        } catch (err) {
-            console.error('Error generando el QR:', err);
-        }
-    }
-
-    if (connection === 'open') {
-        console.log('Conexión establecida con WhatsApp');
-    } else if (connection === 'close') {
-        const shouldReconnect = (lastDisconnect.error === undefined || new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut);
-        console.log('Conexión cerrada, ¿debería reconectar?', shouldReconnect);
-        if (shouldReconnect) {
-            startBot(); // Reintentar la conexión
-        }
-    }
+const client = new Client({
+    authStrategy: new LocalAuth()
 });
 
-    sock.ev.on('creds.update', saveCreds);
-
-    // Procesamiento de mensajes entrantes
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        const message = messages[0];
-        if (!message.message) return;
-
-        const text = message.message.conversation || '';
-        const chatId = message.key.remoteJid;
-
-        console.log(`Mensaje recibido: ${text} en ${chatId}`);
-
-                // Manejo de comandos y autenticación del usuario
-        if (text.toLowerCase() === 'hola') {
-            currentUser = null;
-            currentCategory = null;
-            currentFormLink = null;
-            await sock.sendMessage(chatId, { text: '¡Hola! Escribe tu usuario y contraseña en el formato: usuario contraseña (ejemplo: usuario1 pass1)' });
+client.on('qr', (qr) => {
+    // Generar el QR en formato base64
+    qrcode.toDataURL(qr, (err, url) => {
+        if (err) {
+            console.error('Error generando el QR:', err);
             return;
         }
-        
-        if (!currentUser) {
-            const [user, password] = text.split(' ');
-            // Verifica las credenciales en la base de datos
-            db.query('SELECT * FROM users WHERE username = ? AND password = ?', [user, password], async (err, results) => {
-                if (err) {
-                    console.error('Error al consultar la base de datos:', err);
-                    await sock.sendMessage(chatId, { text: 'Ocurrió un error al verificar tus credenciales. Inténtalo de nuevo.' });
-                    return;
-                }
+        qrCodeData = url;  // Almacena el QR en base64 en la variable qrCodeData
+        console.log('QR generado y disponible en http://localhost:3000/qr para escanear');
+    });
+});
 
-                if (results.length === 0) {
-                    await sock.sendMessage(chatId, { text: 'Usuario no válido o contraseña incorrecta. Por favor, inténtalo nuevamente.' });
-                    return;
-                }
+client.on('disconnected', (reason) => {
+    console.log('Desconectado:', reason);
+});
 
-                currentUser = results[0]; // Asignar el usuario autenticado
-                const options = ['1', '2', '3', '4', '5'];
-                const availableOptions = options.filter(option => currentUser.access.includes(option));
-                const response = `Bienvenido ${user}. Tienes acceso a los siguientes contratos:\n` +
-                                `1. Contratos para Emprendedores\n` +
-                                `2. Contratos para Pymes\n` +
-                                `3. Contratos Empresariales\n` +
-                                `4. Contratos de Arrendamiento\n` +
-                                `5. Contratos Especializados\n\n` +
-                                `Selecciona el número de la opción que te interesa.`;
-                await sock.sendMessage(chatId, { text: response });
-            });
-            return;
-        }
+client.on('auth_failure', (msg) => {
+    console.error('Error de autenticación:', msg);
+});
 
+client.on('ready', () => {
+    console.log('El bot está listo y conectado a WhatsApp');
+});
+
+client.on('message', async message => {
+    const text = message.body.trim().toLowerCase();
+    const chatId = message.from;
+
+    console.log(`Mensaje recibido: ${text} en ${chatId}`);
+
+    if (text === 'hola') {
+        currentUser = null;
+        currentCategory = null;
+        currentFormLink = null;
+        message.reply('¡Hola! Gracias por elegir Mikonsulting. ¿Necesitas un contrato rápido y legal? ¡Nosotros te lo generamos en menos de un minuto! ⚡ Conoce más sobre nuestros servicios y ten el control legal de tus proyectos.\n\nEscribe tu usuario y contraseña en el formato: usuario contraseña (ejemplo: usuario1 pass1)');
+        return;
+    }
+
+    if (!currentUser) {
+        const [user, password] = text.split(' ');
+        // Verifica las credenciales en la base de datos
+        db.query('SELECT * FROM users WHERE username = ? AND password = ?', [user, password], (err, results) => {
+            if (err) {
+                console.error('Error al consultar la base de datos:', err);
+                message.reply('Ocurrió un error al verificar tus credenciales. Inténtalo de nuevo.');
+                return;
+            }
+
+            if (results.length === 0) {
+                message.reply('Usuario no válido o contraseña incorrecta. Por favor, inténtalo nuevamente.');
+                return;
+            }
+
+            currentUser = results[0]; // Asignar el usuario autenticado
+            const options = ['1', '2', '3', '4', '5'];
+            const availableOptions = options.filter(option => currentUser.access.includes(option));
+            const response = `Bienvenido ${user}. Tienes acceso a los siguientes contratos:\n` +
+                            `1. Contratos para Emprendedores\n` +
+                            `2. Contratos para Pymes\n` +
+                            `3. Contratos Empresariales\n` +
+                            `4. Contratos de Arrendamiento\n` +
+                            `5. Contratos Especializados\n\n` +
+                            `Selecciona el número de la opción que te interesa.`;
+            message.reply(response);
+        });
+        return;
+    }
 
 
    // Manejo de opciones disponibles
@@ -162,9 +138,9 @@ async function startBot() {
     // Procesa la opción seleccionada
     if (['1', '2', '3', '4', '5'].includes(option)) {
         if (!currentUser.access.includes(option)) {
-            await sock.sendMessage(chatId, { text: 'Lo siento, no tienes acceso a esta opción. Contacta a ventas.' });
-                    return;
-                }
+            message.reply('Lo siento, no tienes acceso a esta opción. Contacta a ventas.');
+            return;
+        }
 
         currentCategory = option;
         let response = '';
@@ -210,58 +186,89 @@ async function startBot() {
                        'i. KPI';
                 break;
         }
-       await sock.sendMessage(chatId, { text: response + '\n\nSelecciona la letra del formato que deseas recibir.' });
-                return;
-            }
+        message.reply(response);
+        return;
+    }
 
-            if (currentCategory && /^[a-i]$/i.test(option)) {
-                const formLink = links[currentCategory][option.toLowerCase()];
-                if (!formLink) {
-                    await sock.sendMessage(chatId, { text: 'Opción no válida. Por favor, selecciona una letra correcta.' });
-                    return;
-                }
-
-                currentFormLink = formLink;
-                await sock.sendMessage(chatId, { text: `Aquí está el enlace para el contrato seleccionado: ${formLink}` });
-                await sock.sendMessage(chatId, { text: 'Escribe *listo* cuando hayas completado el formulario.' });
-                return;
-            }
-
-            if (text.toLowerCase() === 'listo' && currentFormLink) {
-                db.query('SELECT archivo_pdf FROM contratos WHERE numero_whatsapp = ?', [chatId], async (err, result) => {
-                    if (err) {
-                        console.error('Error al consultar la base de datos:', err);
-                        await sock.sendMessage(chatId, { text: 'Ocurrió un error al procesar tu solicitud.' });
-                        return;
-                    }
-
-                    if (result.length === 0) {
-                        await sock.sendMessage(chatId, { text: 'No se encontró ningún archivo para tu número de WhatsApp.' });
-                        return;
-                    }
-
-                    const filePath = result[0].archivo_pdf;
-                    const fileBuffer = fs.readFileSync(filePath);
-
-                    await sock.sendMessage(chatId, {
-                        document: fileBuffer,
-                        mimetype: 'application/pdf',
-                        fileName: 'contrato.pdf',
-                    });
-
-                    await sock.sendMessage(chatId, { text: 'Aquí está tu contrato en formato PDF.' });
-                    currentFormLink = null; // Restablecer el estado
-                });
-                return;
-            }
-        }
-    });
+   // Manejo de opciones dentro de las categorías
+   if (currentCategory && Object.keys(links[currentCategory]).includes(text)) {
+    currentFormLink = links[currentCategory][text];
+    message.reply(`Aquí tienes el enlace al formulario: ${currentFormLink}\n\nEscribe "listo" para enviar el contrato.`);
+    return;
 }
 
-// Iniciar servidor
+// Verificar si el usuario escribe "listo"
+if (text === 'listo') {
+    // Normaliza el número de WhatsApp
+    const normalizedNumber = chatId.replace(/[^0-9]/g, ''); // Elimina caracteres no numéricos
 
-    startBot(); // Iniciar el bot de WhatsApp
-app.listen(port, () => {
-    console.log(`Servidor escuchando en http://localhost:${port}`);
+    // Realiza la búsqueda en la base de datos
+    db.query('SELECT archivo_pdf FROM contratos WHERE numero_whatsapp = ?', [normalizedNumber], (err, results) => {
+        if (err) {
+            console.error('Error al consultar la base de datos:', err);
+            message.reply('Ocurrió un error al buscar tu contrato. Inténtalo de nuevo.');
+            return;
+        }
+
+        if (results.length === 0) {
+            message.reply('No se encontró un contrato asociado a tu número de WhatsApp.');
+            return;
+        }
+
+        const mediaUrl = results[0].archivo_pdf;
+        console.log('Media URL recuperada:', mediaUrl);
+
+        if (!mediaUrl) {
+            message.reply('No se encontró la URL del contrato en la base de datos.');
+            return;
+        }
+
+        // Codificar la URL para evitar problemas de caracteres especiales
+    const encodedUrl = encodeURI(mediaUrl); // Codificar caracteres especiales en la URL
+
+    // Asegúrate de que la URL es válida
+    try {
+        const url = new URL(encodedUrl); // Validar la URL codificada
+    } catch (error) {
+        console.error('URL inválida:', encodedUrl);
+        message.reply('La URL del contrato no es válida.');
+        return;
+    }
+
+
+        // Enviar el archivo por WhatsApp usando la URL del archivo
+        MessageMedia.fromUrl(encodedUrl, { unsafeMime: true}) // Agregar { unsafeMime: true }
+            .then(media => {
+                client.sendMessage(chatId, media)
+                    .then(() => {
+                        message.reply('Tu contrato ha sido enviado. ¡Gracias por usar Mikonsulting!');
+                    })
+                    .catch(err => {
+                        console.error('Error enviando el contrato:', err);
+                        message.reply('Ocurrió un error al enviar el contrato. Inténtalo de nuevo.');
+                    });
+            })
+            .catch(err => {
+                console.error('Error descargando el archivo:', err);
+                message.reply('Ocurrió un error al descargar el contrato. Inténtalo de nuevo.');
+            });
+    });
+}
+}
 });
 
+// Inicia el cliente de WhatsApp
+client.initialize();
+
+// Endpoint para obtener el QR en base64
+app.get('/qr', (req, res) => {
+if (qrCodeData) {
+res.send(`<img src="${qrCodeData}">`);
+} else {
+res.send('No hay QR disponible. Espera un momento...');
+}
+});
+
+app.listen(port, () => {
+console.log(`Servidor corriendo en http://localhost:${port}`);
+});
